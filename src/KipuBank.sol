@@ -1,29 +1,38 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/// @title KipuBank - Multi-token vault with access control and USD-based limits
-/// @notice Allows users to deposit and withdraw ETH and ERC-20 tokens with USD-based limits
-/// @dev Uses Chainlink price feeds, OpenZeppelin roles, SafeERC20, and internal accounting
+////        Imports
 
-/// --- Libraries ---
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
+////        Libraries
+
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
-/// --- Interfaces ---
+////        Interfaces
+
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 interface IERC20Metadata is IERC20 {
     function decimals() external view returns (uint8);
 }
 
-contract KipuBank is AccessControl {
+/// @title KipuBank - Multi-token vault with USD-based limits and owner control
+/// @notice Allows deposits and withdrawals of ETH and ERC-20 tokens with USD-based caps
+contract KipuBank is Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // --- State Variables ---
+    /// @notice Chainlink price feed for ETH/USD
+    AggregatorV3Interface public immutable ethUsdPriceFeed;
 
-    /// @notice Role identifier for administrators
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    /// @notice Global bank cap in USD (scaled to 6 decimals)
+    uint256 public immutable bankCapUsd;
+
+    /// @notice Max withdrawal per transaction in USD (scaled to 6 decimals)
+    uint256 public immutable withdrawalLimitUsd;
 
     /// @notice Mapping of user balances per token (address(0) = ETH)
     mapping(address => mapping(address => uint256)) public vault;
@@ -31,38 +40,35 @@ contract KipuBank is AccessControl {
     /// @notice Total deposits per token
     mapping(address => uint256) public totalTokenDeposits;
 
-    /// @notice Chainlink price feed for ETH/USD
-    AggregatorV3Interface public immutable ethUsdPriceFeed;
+    /// @notice Emitted when a user deposits ETH or ERC-20
+    /// @param user Address of the depositor
+    /// @param token Token address (address(0) for ETH)
+    /// @param amount Amount deposited
+    event Deposited(address indexed user, address indexed token, uint256 amount);
 
-    /// @notice Global bank cap in USD (scaled to 6 decimals like USDC)
-    uint256 public immutable bankCapUsd;
+    /// @notice Emitted when a user withdraws ETH or ERC-20
+    /// @param user Address of the withdrawer
+    /// @param token Token address (address(0) for ETH)
+    /// @param amount Amount withdrawn
+    event Withdrawn(address indexed user, address indexed token, uint256 amount);
 
-    /// @notice Max withdrawal per transaction in USD (scaled to 6 decimals)
-    uint256 public immutable withdrawalLimitUsd;
+    /// @notice Initializes the contract with limits and Chainlink feed
+/// @param _ethUsdFeed Address of Chainlink ETH/USD price feed
+/// @param _bankCapUsd Global cap in USD (6 decimals)
+/// @param _withdrawalLimitUsd Max withdrawal per tx in USD (6 decimals)
+constructor(
+    address _ethUsdFeed,
+    uint256 _bankCapUsd,
+    uint256 _withdrawalLimitUsd
+) Ownable(msg.sender) {
+    ethUsdPriceFeed = AggregatorV3Interface(_ethUsdFeed);
+    bankCapUsd = _bankCapUsd;
+    withdrawalLimitUsd = _withdrawalLimitUsd;
+}
 
-    // --- Constructor ---
-
-    /// @notice Initializes the contract with roles, limits, and Chainlink feed
-    /// @param _ethUsdFeed Address of Chainlink ETH/USD price feed
-    /// @param _bankCapUsd Global cap in USD (6 decimals)
-    /// @param _withdrawalLimitUsd Max withdrawal per tx in USD (6 decimals)
-    constructor(
-        address _ethUsdFeed,
-        uint256 _bankCapUsd,
-        uint256 _withdrawalLimitUsd
-    ) {
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(ADMIN_ROLE, msg.sender);
-
-        ethUsdPriceFeed = AggregatorV3Interface(_ethUsdFeed);
-        bankCapUsd = _bankCapUsd;
-        withdrawalLimitUsd = _withdrawalLimitUsd;
-    }
-
-    // --- Public Functions ---
 
     /// @notice Deposit ETH into the vault
-    function depositETH() public payable withinBankCap(msg.value, address(0)) {
+    function depositETH() public payable whenNotPaused nonReentrant withinBankCap(msg.value, address(0)) {
         vault[msg.sender][address(0)] += msg.value;
         totalTokenDeposits[address(0)] += msg.value;
         emit Deposited(msg.sender, address(0), msg.value);
@@ -71,7 +77,7 @@ contract KipuBank is AccessControl {
     /// @notice Deposit ERC-20 token into the vault
     /// @param token Address of the ERC-20 token
     /// @param amount Amount to deposit
-    function depositToken(address token, uint256 amount) external withinBankCap(amount, token) {
+    function depositToken(address token, uint256 amount) external whenNotPaused nonReentrant withinBankCap(amount, token) {
         if (token == address(0)) revert InvalidToken();
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         vault[msg.sender][token] += amount;
@@ -81,7 +87,7 @@ contract KipuBank is AccessControl {
 
     /// @notice Withdraw ETH from the vault
     /// @param amount Amount to withdraw
-    function withdrawETH(uint256 amount) external withinWithdrawalLimit(amount, address(0)) {
+    function withdrawETH(uint256 amount) external whenNotPaused nonReentrant withinWithdrawalLimit(amount, address(0)) {
         if (vault[msg.sender][address(0)] < amount) revert InsufficientBalance();
 
         vault[msg.sender][address(0)] -= amount;
@@ -96,7 +102,7 @@ contract KipuBank is AccessControl {
     /// @notice Withdraw ERC-20 token from the vault
     /// @param token Address of the ERC-20 token
     /// @param amount Amount to withdraw
-    function withdrawToken(address token, uint256 amount) external withinWithdrawalLimit(amount, token) {
+    function withdrawToken(address token, uint256 amount) external whenNotPaused nonReentrant withinWithdrawalLimit(amount, token) {
         if (token == address(0)) revert InvalidToken();
         if (vault[msg.sender][token] < amount) revert InsufficientBalance();
 
@@ -107,11 +113,11 @@ contract KipuBank is AccessControl {
         emit Withdrawn(msg.sender, token, amount);
     }
 
-    /// @notice Admin-only function to recover mistakenly sent tokens
+    /// @notice Owner-only function to recover mistakenly sent tokens
     /// @param token Address of the token to recover
     /// @param to Recipient address
     /// @param amount Amount to recover
-    function adminRecoverToken(address token, address to, uint256 amount) external onlyRole(ADMIN_ROLE) {
+    function recoverToken(address token, address to, uint256 amount) external onlyOwner {
         if (token == address(0)) {
             (bool success, ) = to.call{value: amount}("");
             if (!success) revert TransferFailed();
@@ -120,7 +126,15 @@ contract KipuBank is AccessControl {
         }
     }
 
-    // --- Internal Functions ---
+    /// @notice Owner-only function to pause the contract
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /// @notice Owner-only function to unpause the contract
+    function unpause() external onlyOwner {
+        _unpause();
+    }
 
     /// @notice Converts a token amount to USD using Chainlink or 1:1 for stablecoins
     /// @param token Token address (address(0) for ETH)
@@ -150,22 +164,6 @@ contract KipuBank is AccessControl {
         // Extend here to include ERC-20 tokens if needed
     }
 
-    // --- Events ---
-
-    /// @notice Emitted when a user deposits ETH or ERC-20
-    /// @param user Address of the depositor
-    /// @param token Token address (address(0) for ETH)
-    /// @param amount Amount deposited
-    event Deposited(address indexed user, address indexed token, uint256 amount);
-
-    /// @notice Emitted when a user withdraws ETH or ERC-20
-    /// @param user Address of the withdrawer
-    /// @param token Token address (address(0) for ETH)
-    /// @param amount Amount withdrawn
-    event Withdrawn(address indexed user, address indexed token, uint256 amount);
-
-    // --- Modifiers ---
-
     /// @notice Ensures the deposit does not exceed the global USD cap
     /// @param amount Amount of token to deposit
     /// @param token Token address (address(0) for ETH)
@@ -185,8 +183,6 @@ contract KipuBank is AccessControl {
         _;
     }
 
-    // --- Custom Errors ---
-
     /// @notice Thrown when a deposit exceeds the global bank cap
     error BankCapExceeded();
 
@@ -202,10 +198,13 @@ contract KipuBank is AccessControl {
     /// @notice Thrown when an invalid token address is used
     error InvalidToken();
 
-    // --- Receive Function ---
-
     /// @notice Accepts direct ETH transfers and redirects to deposit logic
     receive() external payable {
         depositETH();
+    }
+
+    /// @notice Fallback to reject unexpected calls
+    fallback() external payable {
+        revert();
     }
 }
