@@ -61,30 +61,30 @@ SafeERC20 is used to avoid failures with non-standard tokens.
  Allows tracking of total deposits per token and per user.
 
 **Interaction instructions**
- depositETH(): send ETH directly or call the function.
- depositToken(token, amount): first approve the contract, then call.
- withdrawETH(amount): withdraw ETH if it meets the limit and balance.
- withdrawToken(token, amount): withdraw ERC-20 tokens.
- recoverToken(token, to, amount): only the owner can recover funds.
- pause() / unpause(): emergency control by the owner.
+-  depositETH(): send ETH directly or call the function.
+-  depositToken(token, amount): first approve the contract, then call.
+-  withdrawETH(amount): withdraw ETH if it meets the limit and balance.
+-  withdrawToken(token, amount): withdraw ERC-20 tokens.
+-  recoverToken(token, to, amount): only the owner can recover funds.
+-  pause() / unpause(): emergency control by the owner.
 
 
 **Contract deployment instructions**
 
 **1. Constructor parameters**
  When deploying the contract, you must provide:
- address _ethUsdFeed: address of the Chainlink ETH/USD price feed.
- Example in Sepolia: 0x694AA1769357215DE4FAC081bf1f309aDC325306
- uint256 _bankCapUsd: total bank limit in USD (with 6 decimal places).
- Example: 100000000 for $100,000.00
- uint256 _withdrawalLimitUsd: limit per transaction in USD (with 6 decimal places).
- Example: 5000000 for $5,000.00
+ - address _ethUsdFeed: address of the Chainlink ETH/USD price feed.
+-  Example in Sepolia: 0x694AA1769357215DE4FAC081bf1f309aDC325306
+-  uint256 _bankCapUsd: total bank limit in USD (with 6 decimal places).
+-  Example: 100000000 for $100,000.00
+-  uint256 _withdrawalLimitUsd: limit per transaction in USD (with 6 decimal places).
+-  Example: 5000000 for $5,000.00
 
 *In Remix*
- Copy the contract into Remix.
- Select Solidity 0.8.30 compiler.
- Make sure to import OpenZeppelin and Chainlink correctly.
- Deploy the contract with the above parameters.
+ - Copy the contract into Remix.
+-  Select Solidity 0.8.30 compiler.
+-  Make sure to import OpenZeppelin and Chainlink correctly.
+-  Deploy the contract with the above parameters.
 
 
 **2. Interaction with functions**
@@ -132,10 +132,10 @@ SafeERC20 is used to avoid failures with non-standard tokens.
      Internal: converts any amount to USD based on the token type.
 
 **4. Testing recommendations**
-    Test deposits and withdrawals with ETH and at least two ERC-20 tokens (one stable and one volatile).
-    Simulate scenarios where limits are exceeded to validate errors.
-    Verify that Deposited and Withdrawn events are issued correctly.
-    Test pausing and recovering tokens as owner.
+  - Test deposits and withdrawals with ETH and at least two ERC-20 tokens (one stable and one volatile).
+  - Simulate scenarios where limits are exceeded to validate errors.
+  - Verify that Deposited and Withdrawn events are issued correctly.
+  - Test pausing and recovering tokens as owner.
 
 
 
